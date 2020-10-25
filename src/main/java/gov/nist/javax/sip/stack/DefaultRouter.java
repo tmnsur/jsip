@@ -1,0 +1,286 @@
+package gov.nist.javax.sip.stack;
+
+import gov.nist.javax.sip.message.*;
+import gov.nist.javax.sip.address.*;
+import gov.nist.javax.sip.address.ParameterNames;
+import gov.nist.javax.sip.header.*;
+import gov.nist.javax.sip.*;
+import gov.nist.core.*;
+import gov.nist.core.net.AddressResolver;
+
+import javax.sip.*;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.ListIterator;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import javax.sip.header.RouteHeader;
+import javax.sip.header.ViaHeader;
+import javax.sip.message.*;
+import javax.sip.address.*;
+
+/**
+ * This is the default router. When the implementation wants to forward a
+ * request and had run out of othe options, then it calls this method to figure
+ * out where to send the request. The default router implements a simple
+ * "default routing algorithm" which just forwards to the configured proxy
+ * address.
+ *
+ * <p>
+ * When <code>javax.sip.USE_ROUTER_FOR_ALL_URIS</code> is set to
+ * <code>false</code>, the next hop is determined according to the following
+ * algorithm:
+ * <ul>
+ * <li>If the request contains one or more Route headers, use the URI of the
+ * topmost Route header as next hop, possibly modifying the request in the
+ * process if the topmost Route header contains no lr parameter(*)
+ * <li>Else, if the property <code>javax.sip.OUTBOUND_PROXY</code> is set, use
+ * its value as the next hop
+ * <li>Otherwise, use the request URI as next hop. If the request URI is not a
+ * SIP URI, call {@link javax.sip.address.Router#getNextHop(Request)} provided
+ * by the application.
+ * </ul>
+ *
+ * <p>
+ * (*)Note that in case the topmost Route header contains no 'lr' parameter
+ * (which means the next hop is a strict router), the implementation will
+ * perform 'Route Information Postprocessing' as described in RFC3261 section
+ * 16.6 step 6 (also known as "Route header popping"). That is, the following
+ * modifications will be made to the request:
+ * <ol>
+ * <li>The implementation places the Request-URI into the Route header field as
+ * the last value.
+ * <li>The implementation then places the first Route header field value into
+ * the Request-URI and removes that value from the Route header field.
+ * </ol>
+ * Subsequently, the request URI will be used as next hop target
+ */
+public class DefaultRouter implements Router {
+	private static final Logger logger = Logger.getLogger(DefaultRouter.class.getName());
+
+	private SIPTransactionStack sipStack;
+	private Hop defaultRoute;
+
+	/**
+	 * Constructor.
+	 */
+	public DefaultRouter(SipStack sipStack, String defaultRoute) {
+		this.sipStack = (SIPTransactionStack) sipStack;
+
+		if(defaultRoute != null) {
+			try {
+				this.defaultRoute = this.sipStack.getAddressResolver()
+						.resolveAddress((Hop) (new HopImpl(defaultRoute)));
+			} catch (IllegalArgumentException ex) {
+				// The outbound proxy is optional. If specified it should be host:port/transport.
+				logger.log(Level.SEVERE, "Invalid default route specification - need host:port/transport");
+
+				throw ex;
+			}
+		}
+	}
+
+	/**
+	 * Return addresses for default proxy to forward the request to. The list is
+	 * organized in the following priority. If the requestURI refers directly to a
+	 * host, the host and port information are extracted from it and made the next
+	 * hop on the list. If the default route has been specified, then it is used to
+	 * construct the next element of the list. <code>
+	 * RouteHeader firstRoute = (RouteHeader) req.getHeader( RouteHeader.NAME );
+	 * if (firstRoute!=null) {
+	 *   URI uri = firstRoute.getAddress().getURI();
+	 *    if (uri.isSIPUri()) {
+	 *       SipURI nextHop = (SipURI) uri;
+	 *       if ( nextHop.hasLrParam() ) {
+	 *           // OK, use it
+	 *       } else {
+	 *           nextHop = fixStrictRouting( req );        <--- Here, make the modifications as per RFC3261
+	 *       }
+	 *   } else {
+	 *       // error: non-SIP URI not allowed in Route headers
+	 *       throw new SipException( "Request has Route header with non-SIP URI" );
+	 *   }
+	 * } else if (outboundProxy!=null) {
+	 *   // use outbound proxy for nextHop
+	 * } else if ( req.getRequestURI().isSipURI() ) {
+	 *   // use request URI for nextHop
+	 * }
+	 *
+	 * </code>
+	 *
+	 * @param request is the sip request to route.
+	 *
+	 */
+	public Hop getNextHop(Request request) throws SipException {
+		SIPRequest sipRequest = (SIPRequest) request;
+		RequestLine requestLine = sipRequest.getRequestLine();
+
+		if(requestLine == null) {
+			return defaultRoute;
+		}
+
+		javax.sip.address.URI requestURI = requestLine.getUri();
+		if(requestURI == null) {
+			throw new IllegalArgumentException("Bad message: Null requestURI");
+		}
+
+		RouteList routes = sipRequest.getRouteHeaders();
+
+		/*
+		 * In case the topmost Route header contains no 'lr' parameter (which means the
+		 * next hop is a strict router), the implementation will perform 'Route
+		 * Information Postprocessing' as described in RFC3261 section 16.6 step 6 (also
+		 * known as "Route header popping"). That is, the following modifications will
+		 * be made to the request:
+		 *
+		 * The implementation places the Request-URI into the Route header field as the
+		 * last value.
+		 *
+		 * The implementation then places the first Route header field value into the
+		 * Request-URI and removes that value from the Route header field.
+		 *
+		 * Subsequently, the request URI will be used as next hop target
+		 */
+
+		if(routes != null) {
+			// to send the request through a specified hop the application is
+			// supposed to prepend the appropriate Route header which.
+			Route route = (Route) routes.getFirst();
+			URI uri = route.getAddress().getURI();
+
+			if(uri.isSipURI()) {
+				SipURI sipUri = (SipURI) uri;
+				if(!sipUri.hasLrParam()) {
+					fixStrictRouting(sipRequest);
+
+					logger.log(Level.FINEST, "Route post processing fixed strict routing");
+				}
+
+				Hop hop = createHop(sipUri, request);
+
+				logger.log(Level.FINEST, "NextHop based on Route: {0}", hop);
+
+				return hop;
+			} else {
+				throw new SipException("First Route not a SIP URI");
+			}
+		} else if(requestURI.isSipURI() && ((SipURI) requestURI).getMAddrParam() != null) {
+			Hop hop = createHop((SipURI) requestURI, request);
+
+			logger.log(Level.FINEST, "Using request URI maddr to route the request = {0}", hop);
+
+			return hop;
+		} else if(defaultRoute != null) {
+			logger.log(Level.FINEST, "Using outbound proxy to route the request = {0}", defaultRoute);
+
+			return defaultRoute;
+		} else if(requestURI.isSipURI()) {
+			Hop hop = createHop((SipURI) requestURI, request);
+
+			if(hop != null) {
+				logger.log(Level.FINEST, "Used request-URI for nextHop = {0}", hop);
+			} else {
+				logger.log(Level.FINEST, "returning null hop -- loop detected");
+			}
+
+			return hop;
+		} else {
+			// The internal router should never be consulted for non-sip URIs.
+			InternalErrorHandler.handleException("Unexpected non-sip URI");
+
+			return null;
+		}
+	}
+
+	/**
+	 * Performs strict router fix according to RFC3261 section 16.6 step 6
+	 *
+	 * pre: top route header in request has no 'lr' parameter in URI post:
+	 * request-URI added as last route header, new req-URI = top-route-URI
+	 */
+	public void fixStrictRouting(SIPRequest req) {
+		RouteList routes = req.getRouteHeaders();
+		Route first = (Route) routes.getFirst();
+		SipUri firstUri = (SipUri) first.getAddress().getURI();
+		routes.removeFirst();
+
+		// Add request-URI as last Route entry
+		AddressImpl addr = new AddressImpl();
+		addr.setAddess(req.getRequestURI()); // don't clone it
+		Route route = new Route(addr);
+
+		routes.add(route); // as last one
+		req.setRequestURI(firstUri);
+
+		logger.log(Level.FINEST, "post: fixStrictRouting: {0}", req);
+	}
+
+	/**
+	 * Utility method to create a hop from a SIP URI
+	 *
+	 * @param sipUri
+	 * @return
+	 */
+	protected final Hop createHop(SipURI sipUri, Request request) {
+		// always use TLS when secure
+		String transport = sipUri.isSecure() ? SIPConstants.TLS : sipUri.getTransportParam();
+		if(transport == null) {
+			// @see issue 131
+			ViaHeader via = (ViaHeader) request.getHeader(ViaHeader.NAME);
+			if (via != null) {
+				transport = via.getTransport();
+			}
+			if (transport == null) {
+				transport = ListeningPoint.UDP;
+			}
+		}
+
+		int port;
+		if(sipUri.getPort() != -1) {
+			port = sipUri.getPort();
+		} else {
+			if(transport.equalsIgnoreCase(ParameterNames.TLS)) {
+				port = 5061;
+			} else {
+				// TCP or UDP
+				port = 5060;
+			}
+		}
+
+		String host = sipUri.getMAddrParam() != null ? sipUri.getMAddrParam() : sipUri.getHost();
+
+		AddressResolver addressResolver = this.sipStack.getAddressResolver();
+
+		return addressResolver.resolveAddress(new HopImpl(host, port, transport));
+	}
+
+	/**
+	 * Get the default hop.
+	 *
+	 * @return defaultRoute is the default route. public java.util.Iterator
+	 *         getDefaultRoute(Request request) { return
+	 *         this.getNextHops((SIPRequest)request); }
+	 */
+	@Override
+	public javax.sip.address.Hop getOutboundProxy() {
+		return this.defaultRoute;
+	}
+
+	/*
+	 * (non-Javadoc)
+	 *
+	 * @see javax.sip.address.Router#getNextHop(javax.sip.message.Request)
+	 */
+	public ListIterator getNextHops(Request request) {
+		try {
+			LinkedList llist = new LinkedList();
+			llist.add(this.getNextHop(request));
+			return llist.listIterator();
+		} catch(SipException ex) {
+			logger.log(Level.FINEST, "silently ignoring exception", ex);
+
+			return null;
+		}
+	}
+}
