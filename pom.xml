@@ -12,11 +12,4 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <sonar.jacoco.reportPaths>../target/coverage-reports/jacoco.exec</sonar.jacoco.reportPaths>
   </properties>
-  <dependencies>
-    <dependency>
-      <groupId>javax.sip</groupId>
-      <artifactId>jain-sip-api</artifactId>
-      <version>1.2.1.4</version>
-    </dependency>
-  </dependencies>
 </project>
