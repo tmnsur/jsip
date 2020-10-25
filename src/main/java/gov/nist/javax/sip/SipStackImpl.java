@@ -1764,7 +1764,7 @@ public class SipStackImpl extends SIPTransactionStack implements javax.sip.SipSt
 	public boolean acquireSem() {
 		try {
 			return this.stackSemaphore.tryAcquire(10, TimeUnit.SECONDS);
-		} catch (InterruptedException ex) {
+		} catch(InterruptedException ex) {
 			return false;
 		}
 	}

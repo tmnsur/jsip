@@ -1,5 +1,6 @@
 package gov.nist.javax.sip;
 
+import java.util.Arrays;
 import java.util.EventObject;
 import java.util.LinkedList;
 import java.util.ListIterator;
@@ -438,5 +439,11 @@ public class EventScanner implements Runnable {
 				logger.log(Level.SEVERE, "Event scanner exited abnormally");
 			}
 		}
+	}
+
+	@Override
+	public String toString() {
+		return "EventScanner [isStopped=" + isStopped + ", refCount=" + refCount + ", pendingEvents=" + pendingEvents
+				+ ", eventMutex=" + Arrays.toString(eventMutex) + ", sipStack=" + sipStack + "]";
 	}
 }

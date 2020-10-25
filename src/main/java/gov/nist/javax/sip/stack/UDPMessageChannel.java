@@ -427,7 +427,7 @@ public class UDPMessageChannel extends MessageChannel implements ParseExceptionL
 
 		// Issue 3: https://telestax.atlassian.net/browse/JSIP-3
 		logger.log(Level.INFO, "Setting SIPMessage peerPacketSource to: {0}:{1}", new Object[] {
-				peerPacketSourceAddress, peerPacketSourcePort});
+				peerPacketSourceAddress, String.valueOf(peerPacketSourcePort)});
 
 		sipMessage.setPeerPacketSourceAddress(this.peerPacketSourceAddress);
 		sipMessage.setPeerPacketSourcePort(this.peerPacketSourcePort);

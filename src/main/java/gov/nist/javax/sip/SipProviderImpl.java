@@ -1106,4 +1106,12 @@ public class SipProviderImpl implements javax.sip.SipProvider, gov.nist.javax.si
 	public SipListener getSipListener() {
 		return sipListener;
 	}
+
+	@Override
+	public String toString() {
+		return "SipProviderImpl [sipListener=" + sipListener + ", sipStack=" + sipStack + ", listeningPoints="
+				+ listeningPoints + ", eventScanner=" + eventScanner + ", automaticDialogSupportEnabled="
+				+ automaticDialogSupportEnabled + ", dialogErrorsAutomaticallyHandled="
+				+ dialogErrorsAutomaticallyHandled + ", loopDetectionEnabled=" + loopDetectionEnabled + "]";
+	}
 }
